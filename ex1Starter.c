@@ -14,6 +14,9 @@
 #include <semaphore.h> // in case you want semaphores, but you don't really
                        // need them for this exercise
 
+void barrier_init();
+void barrier();
+
 
 // Print a helpful message followed by the contents of an array
 // Controlled by the value of SHOWDATA, which should be defined
@@ -22,6 +25,7 @@ struct Param{
 	int start;
 	int end;
 	int *data;
+	int id;
 };
 
 
@@ -63,12 +67,40 @@ void *calculate(void *arg){
 	int *data = param.data;
 	int start = param.start;
 	int end = param.end;
-	
+	int id = param.id;
+	// printf("%d\n", id);
+
 	for(int i = start + 1; i < end; i++){
 		data[i] = data[i] + data[i - 1];
 	}
+
+
+
+	barrier();
+
+	// printf("NITEMS: %d\n", NITEMS);
+	// printf("NTHREADS: %d\n", NTHREADS);
+
+	if(id == 0){
+		int len = NITEMS / NTHREADS;
+		for(int i = 1; i < NTHREADS - 1; i++){
+			data[(i + 1) * len - 1] = data[i * len - 1] + data[(i + 1) * len - 1];
+		}
+
+		data[NITEMS - 1] = data[NITEMS - 1] + data[(NTHREADS - 1) * len - 1];
+
+	}
+
+	barrier();
+
 	
-	
+	if(id != 0){
+		for(int i = start; i < end - 1; i++){
+			data[i] = data[i] + data[start - 1];
+		}
+	}
+
+	barrier();
 	
 }
 
@@ -78,10 +110,12 @@ void parallelprefixsum (int *data, int n) {
 	int numPerThreads = n / NTHREADS;
 	pthread_t thread[NTHREADS];
 	struct Param param[NTHREADS];
+	barrier_init();
 	for(int i = 0; i < NTHREADS - 1; i++){
 		param[i].start = i * numPerThreads;
 		param[i].end = param[i].start + numPerThreads;
 		param[i].data = data;
+		param[i].id = i;
 		pthread_create(&thread[i], NULL, calculate, &param[i]);
 	}
 	
@@ -90,6 +124,7 @@ void parallelprefixsum (int *data, int n) {
 	param[NTHREADS - 1].start = (NTHREADS - 1) * numPerThreads;
 	param[NTHREADS - 1].end = NITEMS;
 	param[NTHREADS - 1].data = data;
+	param[NTHREADS - 1].id = NTHREADS - 1;
 	pthread_create(&thread[NTHREADS - 1], NULL, calculate, &param[NTHREADS - 1]);
 	
 	for(int i = 0; i < NTHREADS; i++){
@@ -97,6 +132,7 @@ void parallelprefixsum (int *data, int n) {
 	}
 	
 	//use BARRIER to coordinate all the work thread
+
 	
 	
 }
@@ -141,4 +177,34 @@ int main (int argc, char* argv[]) {
 
   free(arr1); free(arr2);
   return 0;
+}
+
+
+struct BarrierData {
+  pthread_mutex_t barrier_mutex;
+  pthread_cond_t barrier_cond;
+  int nthread; // Number of threads that have reached this round of the barrier
+  int round;   // Barrier round id
+} bstate;
+
+void barrier_init() {
+  pthread_mutex_init(&bstate.barrier_mutex, NULL);
+  pthread_cond_init(&bstate.barrier_cond, NULL);
+  bstate.nthread = 0;
+}
+
+void barrier() {
+    pthread_mutex_lock(&bstate.barrier_mutex);
+    bstate.nthread++;
+    if(bstate.nthread == NTHREADS) {
+        bstate.round++;
+        bstate.nthread = 0;
+        pthread_cond_broadcast(&bstate.barrier_cond);
+    } else {
+        int lround = bstate.round;
+        do {
+            pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+        } while(lround == bstate.round);
+    }
+    pthread_mutex_unlock(&bstate.barrier_mutex);
 }
